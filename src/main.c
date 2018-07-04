@@ -85,7 +85,12 @@
 #include <util/atomic.h>
 #include <util/delay.h>
 
-static uint8_t i = 255;
+static uint16_t i = 0x800;
+static uint8_t l,h;
+
+//#define TEST_COMM
+//#define VER2
+
 
 #define F_CPU 16000000
 #define UART0_BAUDRATE 57600
@@ -113,41 +118,68 @@ static inline __attribute__((always_inline)) void send_data(uint8_t data) {
   TIFR |= _BV(OCF2);
 }
 
-//#define VER2
 #ifdef VER2
 int main(void) {
   UCSRC = _BV(URSEL) | _BV(UCSZ1) | _BV(UCSZ0);
   UBRRH = CALC_BPS(UART0_BAUDRATE) >> 8;
   UBRRL = CALC_BPS(UART0_BAUDRATE) & 0xff;
   UCSRB = (_BV(TXEN));
-  uint8_t code[] = { 0xA9 ,0x00       // lda #0
+#ifdef TEST_COMM
+  uint8_t code[] = { 0xA9 ,0xff       // lda #ff
                     ,0x85 ,0x82       // sta $82
                     ,0xA2 ,0x00       // ldx #0
-                    ,0xBD ,0x00 ,0x08 //lda $800,x
-                    ,0x85 ,0x80       // sta $80
-                    ,0xA9 ,0xFF       // lda #$ff
+                    ,0xa5, 0x82       // lda $82
+                    ,0xf0, 0xfc       // beq chk
+                    ,0x86 ,0x80       // stx $80
+                    ,0xA9 ,0x00       // lda #$00
                     ,0x85 ,0x82       // sta $82
-                    ,0xA9 ,0x00       // lda #00
+                    ,0xA9 ,0xff       // lda #ff
                     ,0x85 ,0x82       // sta $82
+                    ,0xa5, 0x82       // lda $82  - watch for flag
+                    ,0xd0, 0xfc       // bne chk2
                     ,0xE8             // inx
-                    ,0xD0 ,0xF0       // bne loop
+                    ,0xD0 ,0xeb       // bne loop
                     ,0xe6 ,0x08       // inc $08
                     ,0xa5, 0x08       // lda $08
                     ,0xc9, 0x10       // cmp $10
-                    ,0xd0 ,0xE6       // bne loop2
+                    ,0xd0 ,0xe1       // bne loop2
                     ,0xf0, 0xfe       // beq loop3 (this);
                    };
-
+#else
+  uint8_t code[] = { 0xA9 ,0xff       // lda #ff
+                    ,0x85 ,0x82       // sta $82
+                    ,0xA2 ,0x00       // ldx #0
+                    ,0xa5, 0x82       // lda $82
+                    ,0xf0, 0xfc       // beq chk
+                    ,0xBD ,0x00 ,0x08 // lda $800,x
+                    ,0x85 ,0x80       // sta $80
+                    ,0xA9 ,0x00       // lda #$00
+                    ,0x85 ,0x82       // sta $82
+                    ,0xA9 ,0xff       // lda #ff
+                    ,0x85 ,0x82       // sta $82
+                    ,0xa5, 0x82       // lda $82  - watch for flag
+                    ,0xd0, 0xfc       // bne chk2
+                    ,0xE8             // inx
+                    ,0xD0 ,0xe8       // bne loop
+                    ,0xe6 ,0x08       // inc $08
+                    ,0xa5, 0x08       // lda $08
+                    ,0xc9, 0x10       // cmp $10
+                    ,0xd0 ,0xde       // bne loop2
+                    ,0xf0, 0xfe       // beq loop3 (this);
+                   };
+#endif
 
   DDRD = CLK | TEST | RESET;
   DDRC = 0xff;
   RESET_ON();
   DDRA = 0;
   PORTA = 0xff;
-  OCR2 = 32;
+  OCR2 = 31;
   TCCR2 = _BV(WGM21) | _BV(COM20) | _BV(CS20); // /16MHz, CTC mode
 
   while(1) {
+    while(!(TIFR & _BV(OCF2))); // went lo
+    TIFR |= _BV(OCF2);
     RESET_ON();
     send_data(0xEA);
     send_data(0xEA);  // it'll work without the remaining 3 of these, but it's better with all 4
@@ -161,10 +193,21 @@ int main(void) {
     send_data(0xEA);
     send_data(0xEA);
 
+    send_data(0xEA); // but, these seem to be needed.
+    send_data(0xEA); //keep
+    send_data(0xEA); //keep
+
+    send_data(0x2C); // bit abs - if we hit here, we do bit ea24; nop, sei, sei
+    send_data(0x24); // bit zp - if we hit here, we do bit ea, nop sei, sei
+    send_data(0xEA); //nop
+    send_data(0xEA); // nop
+    send_data(0x78); // sei
+    send_data(0x78); // sei
+
     for(i = 0; i< sizeof(code);i++) {
-      send_data(0xA9);
+      send_data(0xA9);  // lda #imm
       send_data(code[i]);
-      send_data(0x85);
+      send_data(0x85);  // sta zp
       send_data(0x00 + i);
       TEST_OFF();
       send_data(0);  // extra cycle
@@ -174,13 +217,15 @@ int main(void) {
     send_data(0);
     send_data(0);
     TEST_OFF();
-    PORTC = 0;
-    DDRC = 0;
+    PORTC = 0;  // no pullups
+    DDRC = 0;   // input
     //while(PINC);
     while(1) {
-      while(!PINC);
-      UDR = PINA;  // uart output
       while(PINC);
+      DDRC = 0xff;   // output, and set to low to ack the data
+      UDR = PINA;  // uart output
+      while(!(UCSRA & _BV(TXC))) {} // wait for byte to be sent
+      DDRC = 0;   // input
     }
   }
 }
@@ -197,36 +242,19 @@ int main(void) {
   RESET_ON();
   DDRA = 0;
   PORTA = 0xff;
-  OCR2 = 32;
+  OCR2 = 31; // Clock = 250KHz
   TCCR2 = _BV(WGM21) | _BV(COM20) | _BV(CS20); // /16MHz, CTC mode
 
+  while(!(TIFR & _BV(OCF2))); // make sure reset happens on a clock low portion
+  TIFR |= _BV(OCF2);
   while(1) {
-    send_data(0xEA); // just wasting some time...
+    l = i & 255;
+    h = i >> 8;
     RESET_ON();
-    send_data(0xEA);
-    i++;
-    send_data(0xEA);
-    send_data(0xEA);
-
-    send_data(0xEA);
-    send_data(0xEA);
+    send_data(0xEA);  // waste a bit of time
     send_data(0xEA);
     send_data(0xEA);
 
-    send_data(0xEA);
-    send_data(0xEA);
-    send_data(0xEA);
-    send_data(0xEA);
-
-    send_data(0xEA);
-    send_data(0xEA);
-    send_data(0xEA);
-    send_data(0xEA);
-
-    send_data(0xEA);
-    send_data(0xEA);
-    send_data(0xEA);
-    send_data(0xEA);
     TEST_ON();
 
     send_data(0xEA);  // these 4 can be removed and the code still
@@ -235,34 +263,38 @@ int main(void) {
     send_data(0xEA);
 
     send_data(0xEA); // but, these seem to be needed.
-    send_data(0xEA); //keep
-    send_data(0xEA); //keep
+    send_data(0xEA); // keep
+    send_data(0xEA); // keep
 
-    send_data(0x2C);
-    send_data(0x24);
-    send_data(0xEA);
-    send_data(0xEA);
-    send_data(0x78);
-    send_data(0x78);
-//#define IMMEDIATE
-#ifdef IMMEDIATE
-    send_data(0xA9);
-    send_data(i);
+    send_data(0x2C); // bit abs - if we hit here, we do bit ea24; nop, sei, sei
+    send_data(0x24); // bit zp - if we hit here, we do bit ea, nop sei, sei
+    send_data(0xEA); // nop
+    send_data(0xEA); // nop
+    send_data(0x78); // sei
+    send_data(0x78); // sei
+#ifdef TEST_COMM
+    send_data(0xA9); // lda #<i>
+    send_data(l);
 #else
-    send_data(0xad);
-    send_data(i);
-    send_data(0x08);
+    send_data(0xad); // lda <PAGE:i>
+    send_data(l);
+    send_data(h);
     TEST_OFF();
-    send_data(0);
+    send_data(0);   // get data from ROM
     TEST_ON();
 
 #endif
-    send_data(0x85);
+    send_data(0x85); // sta $80
     send_data(0x80);
 
-    send_data(0x80);
+    TEST_OFF();     // not sure this is needed, but...
+    send_data(0x0); // clock the sta out.
     //send_data(0x02);
-    UDR = PINA;  // uart output
+    UDR = PINA;     // uart output
+    RESET_ON();
+    while(!(UCSRA & _BV(TXC))) {} // wait for byte to be sent
+    i++;
+    while(i == 4096) {} // stop when you've read all rom
   }
 }
 #endif
