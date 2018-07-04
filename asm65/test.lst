@@ -1,0 +1,18 @@
+0001   0000 A2 00       loop2 ldx #00
+0002   0002 B5 00       loop lda 0,x
+0003   0004             sta $f3
+c:\temp\test.asm line 0003: Label not found: (sta)
+c:\temp\test.asm line 0003: label value misalligned.           (sta)
+c:\temp\test.asm line 0003: unrecognized directive.            (sta)
+0004   0004             inx
+0005   0004             bne loop
+c:\temp\test.asm line 0005: Label not found: (bne)
+c:\temp\test.asm line 0005: label value misalligned.           (bne)
+c:\temp\test.asm line 0005: unrecognized instruction.          (bne)
+0006   0004             beq loop2
+c:\temp\test.asm line 0006: Label not found: (beq)
+c:\temp\test.asm line 0006: label value misalligned.           (beq)
+c:\temp\test.asm line 0006: unrecognized instruction.          (beq)
+0007   0004             
+ line 0007: No END directive before EOF.       
+tasm: Number of errors = 10
